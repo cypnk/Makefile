@@ -40,41 +40,54 @@ LDFLAGS		?= -Wl -Bstatic
 
 # End custom options
 
-
-# mkdir helper
-MKDIR_P		?= mkdir -p
-
-# Compiler detect
+# Default compilers
 CC		?= clang
 CXX		?= clang++
 AS		?= clang
 COMPILER_NAME	?= Unknown
 
 # Compiler flags
+CFLAGS		+= -fsanitize=address -Wall -Wextra -O2
+CXXFLAGS	+= -fsanitize=address -Wall -Wextra -Wconversion \
+		-Wunreachable-code -Wshadow -Werror -pedantic -std=c++17 -O2
+
+# Platform detect
+ifeq ($(OS),)
+	UNAME_S	:= $(shell uname -s)
+	ifeq ($(UNAME_S),Darwin)
+		OS = Darwin
+	else ifeq ($(UNAME_S),Linux)
+		OS = Linux
+	else
+		OS = Unix
+	endif
+endif
+
+# Helpers
+ifeq ($(OS),Windows_NT)
+	MKDIR_P		= mkdir
+	RMDIR		= if exist $(1) rmdir /s /q $(1)
+else
+	MKDIR_P		= mkdir -p
+	RMDIR		= rm -rf $(1)
+endif
+
+# Compiler detect
 ifeq ( $(CC), clang )
-	CFLAGS		+= -fsanitize=address -Wall -Wextra -O2
 	COMPILER_NAME	= Clang
 endif
 
 ifeq ( $(CC), gcc )
-	CFLAGS		+= -fsanitize=address -Wall -Wextra -O2
 	COMPILER_NAME	= GCC
 endif
 
 ifeq ($(CXX), clang++)
-	CXXFLAGS	+= -fsanitize=address -Wall -Wextra -Wconversion \
-		-Wunreachable-code -Wshadow -Werror -pedantic -std=c++17 -O2
-	
 	COMPILER_NAME	= Clang++
 endif
 
 ifeq ($(CXX), g++)
-	CXXFLAGS	+= -fsanitize=address -Wall -Wextra -Wconversion \
-		-Wunreachable-code -Wshadow -Werror -pedantic -std=c++17 -O2
-	
 	COMPILER_NAME	= G++
 endif
-
 
 
 # Find sources
@@ -97,6 +110,13 @@ DEPS		:= $(C_DEPS) $(CPP_DEPS)
 # Combined objects
 OBJS		:= $(ASM_OBJS) $(C_OBJS) $(CPP_OBJS)
 
+# Set linker
+ifneq ($(strip $(CPP_SRCS)),)
+	LINKER = $(CXX)
+else
+	LINKER = $(CC)
+endif
+
 # Default build target
 all: $(TARGET)
 	$(MKDIR_P) $(BUILD_DIR)/obj/c $(BUILD_DIR)/obj/cpp
@@ -105,18 +125,24 @@ all: $(TARGET)
 # Check compiler version
 check-version:
 	@echo "Compiler $(COMPILER_NAME)" > $(BUILD_LOG)
-	@$(CC) --version | head -n 1 >> $(BUILD_LOG)
-
+	@$(LINKER) --version | head -n 1 >> $(BUILD_LOG)
 
 
 # Executable linking
 $(TARGET): $(OBJS)
 	@echo "Building. Check $(BUILD_LOG) for details once complete."
 	@echo "Linking objects" >> $(BUILD_LOG)
-	$(CC) $(OBJS) $(LDFLAGS) -o $(TARGET)
+	$(MKDIR_P) $(BIN_DIR)
+	$(LINKER) $(OBJS) $(LDFLAGS) -o $(TARGET)
 
 
 # Dependency generation
+
+# Assembly dependencies
+$(OBJ_DIR)/asm/%.d: $(SRC_DIR)/%.s
+	$(MKDIR_P) $(dir $@)
+	@echo "Dependency for $<" >> $(BUILD_LOG)
+	$(AS) -MMD -MP $(ASFLAGS) $< > $@
 
 # C dependencies
 $(OBJ_DIR)/c/%.d: $(SRC_DIR)/%.c
@@ -146,14 +172,14 @@ $(OBJ_DIR)/asm/%.o: $(SRC_DIR)/%.s $(OBJ_DIR)/asm/%.d
 	$(AS) $(ASFLAGS) -c $< -o $@
 	
 # C source
-$(OBJ_DIR)/c/%.c.o: $(SRC_DIR)/%.c $(OBJ_DIR)/c/%.d
+$(OBJ_DIR)/c/%.o: $(SRC_DIR)/%.c $(OBJ_DIR)/c/%.d
 	$(MKDIR_P) $(dir $@)
 	
 	@echo "Compiling C source $<" >> $(BUILD_LOG)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # C++ source
-$(OBJ_DIR)/cpp/%.cpp.o: $(SRC_DIR)/%.cpp $(OBJ_DIR)/cpp/%.d
+$(OBJ_DIR)/cpp/%.o: $(SRC_DIR)/%.cpp $(OBJ_DIR)/cpp/%.d
 	$(MKDIR_P) $(dir $@)
 	
 	@echo "Compiling C++ source $<" >> $(BUILD_LOG)
@@ -161,7 +187,13 @@ $(OBJ_DIR)/cpp/%.cpp.o: $(SRC_DIR)/%.cpp $(OBJ_DIR)/cpp/%.d
 
 
 clean:
-	$(RM) -rf $(BUILD_DIR)
+	$(call RMDIR,$(BUILD_DIR))
+
+clean-obj:
+	$(call RMDIR,$(BUILD_DIR)/obj)
+
+distclean: clean
+	$(call RMDIR,$(BIN_DIR))
 
 .PHONY:	all check-version clean
 
